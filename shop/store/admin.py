@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.safestring import mark_safe
-from .models import Product, Category, Gallery, Order, Cart, Shipping
+from .models import Product, Category, Gallery, Order, Cart, Shipping, FavoriteProduct
 
 # Register your models here.
 class AdminGalleryView(admin.TabularInline):
@@ -21,7 +21,7 @@ class AdminCategoryView(admin.ModelAdmin):
 
 @admin.register(Product)
 class AdminProductView(admin.ModelAdmin):
-    list_display = ('title', 'category', 'quantity', 'price', 'size', 'color', 'created_at', 'get_first_photo')
+    list_display = ('id', 'title', 'category', 'quantity', 'price', 'size', 'color', 'created_at', 'get_first_photo')
     list_editable = ('price', 'color', 'size', 'quantity')
     prepopulated_fields = {'slug': ('title',)}
     list_filter = ('category', 'price')
@@ -37,6 +37,17 @@ class AdminProductView(admin.ModelAdmin):
             return '-'
         
         
-admin.site.register(Cart)
+@admin.register(FavoriteProduct)
+class AdminUserFavoriteProduct(admin.ModelAdmin):
+    list_display = ('id', 'product')
+        
+@admin.register(Cart)
+class AdminUserCart(admin.ModelAdmin):
+    list_display = ('id', 'user', 'product', 'price', 'quantity')
+    list_filter = ('user',)
+    
+    
+    
+    
 admin.site.register(Order)
 admin.site.register(Shipping)

@@ -11,3 +11,8 @@ def create_order(user, shipping, cart_product,
     order.cart_product.set(cart_product)
     
     return order
+
+
+CART_ADD_PRODUCT_PATH = '/api/cart/add/'
+CART_DELETE_SOME_PRODUCT_PATH = '/api/cart/delete/some/'
+CART_DELETE_PRODUCT_PATH = '/api/cart/delete/'
