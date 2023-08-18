@@ -81,6 +81,7 @@ WSGI_APPLICATION = 'shop.wsgi.application'
 # ALLOWED_HOSTS = ['192.168.11.129']
 
 
+
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 

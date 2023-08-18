@@ -71,7 +71,7 @@ class Gallery(models.Model):
 
 class Review(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='Пользователь')
-    text = models.TextField(default='Написать отзыв', verbose_name='Отзыва пользователя')
+    text = models.TextField(verbose_name='Отзыва пользователя')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания отзыва')
     product = models.ForeignKey(Product, related_name='reviews', verbose_name='Продукт', on_delete=models.CASCADE)
     parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
@@ -100,7 +100,7 @@ class FavoriteProduct(models.Model):
 
 class Cart(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='cart_product')
     quantity = models.PositiveIntegerField(default=0, verbose_name='Количество продукта')
     price = models.PositiveIntegerField()
     
@@ -110,6 +110,7 @@ class Cart(models.Model):
     class Meta:
         verbose_name ='Корзина'
         verbose_name_plural = 'Корзины'
+        
     
 class Shipping(models.Model):
     id = models.UUIDField(primary_key=True, editable=False, default=uuid.uuid4)

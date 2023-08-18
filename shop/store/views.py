@@ -6,10 +6,11 @@ from shop import settings
 import stripe
 
 from .serializers import (CategorySerializer, CategoryDetailSerializer, ProductDetailSerializer,
-                          CreateReviewSerializer, UserFavoriteProductSerializer, AddProductToUserFavorites,
-                          AddProductToUserCartSerializer, UserCartSerializer, ShippingSerializer, UserOrderSerializer)
+                          ReviewCUDSerializer, UserFavoriteProductSerializer, AddProductToUserFavorites,
+                          AddProductToUserCartSerializer, ShippingSerializer, UserOrderSerializer,
+                          UserCartSerializer)
 from .models import (Category, Product, FavoriteProduct,
-                    Cart, Shipping, Order)
+                    Cart, Shipping, Order, Review)
 from . import mixins
 
 
@@ -28,19 +29,36 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductDetailSerializer      
     
-class ReviewCreateViewSet(viewsets.ModelViewSet):
-    serializer_class = CreateReviewSerializer  
+    
+class ReviewCUDViewSet(viewsets.ModelViewSet):
+    serializer_class = ReviewCUDSerializer  
     permission_classes = [permissions.IsAuthenticated]  
     
+    def get_queryset(self):
+        user = self.request.user
+        review_id = self.kwargs['pk'] if 'pk' in self.kwargs else None
+        user_review = Review.objects.filter(user=user, id=review_id).exists() if review_id else False
+        if user_review: return Review.objects.all()
+        else: return None
+        
     def perform_create(self, serializer):
         serializer.save(user=self.request.user) 
+
+        
         
         
 class AddToFavoriteViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]  
     serializer_class = AddProductToUserFavorites
-    queryset = Product.objects.all()
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+        
 
+class DeleteProductFromFavoriteViewSet(viewsets.ModelViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = FavoriteProduct.objects.all()
+    
 
 class UserFavoriteProductsViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]  
@@ -52,80 +70,56 @@ class UserFavoriteProductsViewSet(viewsets.ReadOnlyModelViewSet):
         return products
     
     
-class ProductToUserCartViewSet(viewsets.ModelViewSet):
+    
+    
+class ProductCUDUserCartViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Product.objects.all()
     serializer_class = AddProductToUserCartSerializer
     
+    def get_queryset(self):
+        if self.action == 'create':
+            return Product.objects.all()
+        elif self.action == 'destroy':
+            return Cart.objects.all()
     
-    
+    def perform_destroy(self, instance):
+        product_in_cart = Cart.objects.get(id=instance.id)
+        product = Product.objects.get(id=product_in_cart.product.id)
+        product.quantity += product_in_cart.quantity
+        product.save()        
+        return super().perform_destroy(instance)
+
 
 class UserCartViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserCartSerializer
     
     def get_queryset(self):
         user = self.request.user
-        queryset = Cart.objects.filter(user=user)
-        return queryset
+        return Cart.objects.filter(user=user)
     
-    def list(self, request, *args, **kwargs):
+    def finalize_response(self, request, response, *args, **kwargs):
         queryset = self.get_queryset()
-        serializer = UserCartSerializer(queryset, many=True)
+        serializer_data = self.get_serializer(queryset, many=True).data
         cart_total_price = sum([product.price for product in queryset])
         cart_product_total_quantity =sum([product.quantity for product in queryset])
-        return Response({'products': serializer.data, 'total_price': cart_total_price, 'total_quantity': cart_product_total_quantity}, status=200)
-    
-
-    
-    
-class CheckoutView(APIView):
-    
-    def cart_data(self, request):
-        user = request.user
-        queryset = Cart.objects.filter(user=user)
-        cart_total_price = sum([product.price for product in queryset])
-        cart_product_total_quantity =sum([product.quantity for product in queryset])
-        return {'queryset': queryset, 
-                'cart_total_price': cart_total_price, 
-                'cart_product_total_quantity': cart_product_total_quantity, 
-                'user': user}
-    
-    def get(self, request):
-        cart_data = self.cart_data(request)
-        user_data = Shipping.objects.filter(user=cart_data['user']).first()
-        if user_data:
-            user_serializer = ShippingSerializer(user_data)
+        final_data = {
+            'products': serializer_data,
+            'totals': {'total_price': cart_total_price, 'total_quantity': cart_product_total_quantity}
+        }
+        if mixins.CHECKOUT_PATH == self.request.path:
+            user_shipping_data = Shipping.objects.filter(user=self.request.user).first()
+            shipping_serializer = ShippingSerializer(user_shipping_data)
+            final_data['user_shipping_data'] = shipping_serializer.data if user_shipping_data else 'None'
+        response =  Response(final_data, status=status.HTTP_200_OK)
+        return super().finalize_response(request, response)
             
-        serializer = UserCartSerializer(cart_data['queryset'], many=True)
-        return Response({'products': serializer.data,
-                         'user_data': user_serializer.data if user_data else 'Увы! мы не знаем куда доставить ваш заказ', 
-                         'total_price': cart_data['cart_total_price'], 
-                         'total_quantity': cart_data['cart_product_total_quantity']}, 
-                        status=status.HTTP_200_OK)
-        
-    def post(self, request):
-        cart_data = self.cart_data(request)
-        user = cart_data['user']
-        cart_serializer = UserCartSerializer(cart_data['queryset'], many=True)
-
-        serializer = ShippingSerializer(data=self.request.data)
-        if serializer.is_valid():
-            serializer.save(user=user)
-            return Response({'Detail': serializer.data,
-                             'Cart': {'Products' : cart_serializer.data, 
-                                      'Общая стоимость': cart_data['cart_total_price'], 
-                                      'Общее количество продуктов': cart_data['cart_product_total_quantity']}}, 
-                            status=status.HTTP_200_OK)
-        else:
-            return Response({'message': 'Возникла ошибка'}, status=status.HTTP_400_BAD_REQUEST)
-        
         
 class PaymentView(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
     stripe.api_key = settings.STRIPE_SECRET_KEY
     
-    
-    def create(self, request):
+    def list(self, request):
         user = self.request.user
         user_cart = Cart.objects.filter(user=user)
         user_data = Shipping.objects.filter(user=user).first()
@@ -148,16 +142,13 @@ class PaymentView(viewsets.ViewSet):
                 success_url=request.build_absolute_uri(),
                 cancel_url=request.build_absolute_uri()
             )
-            
             mixins.create_order(user=user,
                          total_price=total_price,
                          total_quantity=total_quantity,
                          session_id=session['id'],
                          shipping=user_data,
                          cart_product=[cart_product.product.id for cart_product in user_cart])
-            
             user_cart.delete()
-            
             return Response({'message': 'Заказ оформлен'}, status=status.HTTP_303_SEE_OTHER)
         elif total_quantity < 1:
             return Response({'error': 'Ваша корзина пуста'}, status=status.HTTP_409_CONFLICT)
@@ -166,11 +157,12 @@ class PaymentView(viewsets.ViewSet):
 
 
 class UserOrderViewSet(viewsets.ModelViewSet):
-    def get_queryset(self):
-        user = self.request.user
-        queryset = Order.objects.filter(user=user)
-        return queryset
-    
     serializer_class = UserOrderSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        return Order.objects.filter(user=user)
+    
+
         
