@@ -1,18 +1,36 @@
-from .models import Order
+
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
 
 
-def create_order(user, shipping, cart_product, 
-                 total_price, total_quantity, session_id):
-    order = Order.objects.create(user=user,
-                         shipping=shipping,
-                         order_total_price=total_price,
-                         order_product_total_quantity=total_quantity,
-                         session_id=session_id)
-    order.cart_product.set(cart_product)
+class ProductPagination(PageNumberPagination):
+    page_size = 1
+    max_page_size = 20
     
-    return order
+    def get_paginated_response(self, data):
+        return Response({
+            'link': {
+                'next': self.get_next_link(),
+                'previous': self.get_previous_link()
+            },
+            'count': self.page.paginator.count,
+            'result': data
+        })
 
-
-CART_ADD_PRODUCT_PATH = '/api/cart/add/'
-CART_DELETE_PRODUCT_PATH = '/api/cart/delete/'
+def update_product_quantity(product_in_cart, product, request_data_quantity):
+    product.quantity += product_in_cart.quantity - request_data_quantity
+    return product.save()
+    
+def get_star():
+    return [
+        ('1', '1'),
+        ('2', '2'),
+        ('3', '3'),
+        ('4', '4'),
+        ('5', '5')
+    ]
+CART_ADD_PRODUCT_PATH = 'add'
+CART_DELETE_PRODUCT_PATH = 'delete'
+CART_CHANGE_PRODUCT_QUANTITY_IN_CART_PATH = 'update'
 CHECKOUT_PATH = '/checkout/'
+

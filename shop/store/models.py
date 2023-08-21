@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from . import mixins
 import uuid
 # Create your models here.
 
@@ -84,6 +85,18 @@ class Review(models.Model):
         verbose_name_plural = 'Отзывы'
         
         
+class Rating(models.Model):
+    user = models.ForeignKey(User, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='user_rating')
+    product = models.ForeignKey(Product, verbose_name='Продукт', on_delete=models.CASCADE, related_name='product_rating')
+    star = models.CharField(choices=mixins.get_star(), verbose_name='Оценка')
+    
+    def __str__(self) -> str:
+        return f'Оценка пользователя: {self.user.username}'
+    
+    class Meta:
+        verbose_name = 'Рейтинг'
+        verbose_name_plural = 'Рейтинги'
+        
         
 class FavoriteProduct(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='Пользователь')
@@ -132,7 +145,6 @@ class Shipping(models.Model):
 class Order(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    cart_product = models.ManyToManyField(Product)
     shipping = models.ForeignKey(Shipping, on_delete=models.PROTECT)
     order_total_price = models.PositiveIntegerField()
     order_product_total_quantity = models.PositiveIntegerField()
@@ -144,6 +156,27 @@ class Order(models.Model):
     class Meta:
         verbose_name ='Заказ'
         verbose_name_plural = 'Заказы'
+        
+class OrderProduct(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    
+    def __str__(self) -> str:
+        return str(self.order.id)
+    
+    class Meta:
+        verbose_name = 'Продукт заказа'
+        verbose_name_plural = 'Продукты заказа'
+        
+    
+        
+        
+class Customer(models.Model):
+    user = models.ForeignKey(User, verbose_name='Пользователь', on_delete=models.CASCADE)
+    first_name = models.CharField(verbose_name='Имя пользователя', max_length=50)
+    last_name = models.CharField(verbose_name='Фамилия пользователя', max_length=50)
+    phone = models.CharField(verbose_name='Номер телефона', max_length=30)
+    image = models.ImageField(verbose_name='Изображение', upload_to='user/', null=True, blank=True)
         
         
 

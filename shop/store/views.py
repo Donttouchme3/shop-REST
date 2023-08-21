@@ -8,12 +8,21 @@ import stripe
 from .serializers import (CategorySerializer, CategoryDetailSerializer, ProductDetailSerializer,
                           ReviewCUDSerializer, UserFavoriteProductSerializer, AddProductToUserFavorites,
                           AddProductToUserCartSerializer, ShippingSerializer, UserOrderSerializer,
-                          UserCartSerializer)
+                          UserCartSerializer, RatingSerializer, CustomerSerializer, PaymentSerializer)
 from .models import (Category, Product, FavoriteProduct,
-                    Cart, Shipping, Order, Review)
+                    Cart, Shipping, Order, Review, Customer)
 from . import mixins
 
 
+
+class CustomerViewSet(viewsets.ModelViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = CustomerSerializer
+    queryset = Customer
+    lookup_field = 'user'
+    
+    def perform_create(self, serializer):
+        return super().perform_create(serializer.save(user=self.request.user))
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -24,10 +33,14 @@ class CategoryViewSet(viewsets.ModelViewSet):
         elif self.action == 'list':
             return CategorySerializer
     
+    
+    
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.all()
-    serializer_class = ProductDetailSerializer      
+    serializer_class = ProductDetailSerializer  
+    
+        
     
     
 class ReviewCUDViewSet(viewsets.ModelViewSet):
@@ -47,6 +60,16 @@ class ReviewCUDViewSet(viewsets.ModelViewSet):
         
         
         
+class RatingViewSet(viewsets.ModelViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = RatingSerializer
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+    
+    
 class AddToFavoriteViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]  
     serializer_class = AddProductToUserFavorites
@@ -75,11 +98,12 @@ class UserFavoriteProductsViewSet(viewsets.ReadOnlyModelViewSet):
 class ProductCUDUserCartViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = AddProductToUserCartSerializer
+    lookup_field = 'product'
     
     def get_queryset(self):
         if self.action == 'create':
             return Product.objects.all()
-        elif self.action == 'destroy':
+        elif mixins.CART_CHANGE_PRODUCT_QUANTITY_IN_CART_PATH or mixins.CART_DELETE_PRODUCT_PATH in self.request.path:
             return Cart.objects.all()
     
     def perform_destroy(self, instance):
@@ -88,6 +112,9 @@ class ProductCUDUserCartViewSet(viewsets.ModelViewSet):
         product.quantity += product_in_cart.quantity
         product.save()        
         return super().perform_destroy(instance)
+    
+    def perform_update(self, serializer):
+        serializer.save(user=self.request.user)
 
 
 class UserCartViewSet(viewsets.ModelViewSet):
@@ -115,45 +142,20 @@ class UserCartViewSet(viewsets.ModelViewSet):
         return super().finalize_response(request, response)
             
         
+        
+        
 class PaymentView(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
-    stripe.api_key = settings.STRIPE_SECRET_KEY
+    stripe.api_key = settings.STRIPE_SECRET_KEY    
     
-    def list(self, request):
-        user = self.request.user
-        user_cart = Cart.objects.filter(user=user)
-        user_data = Shipping.objects.filter(user=user).first()
-        total_price = sum([product.price for product in user_cart])
-        total_quantity = sum([product.quantity for product in user_cart])
-        if total_price > 0 and total_quantity >= 1 and user_data:
-            session = stripe.checkout.Session.create(
-                line_items=[{
-                    'price_data': {
-                        'currency': 'usd',
-                        'product_data': {
-                            'name': 'Товары'
-                        },
-                        'unit_amount': int(total_price / 2)
-                    },
-                    'quantity': total_quantity,
-                    
-                }],
-                mode='payment',
-                success_url=request.build_absolute_uri(),
-                cancel_url=request.build_absolute_uri()
-            )
-            mixins.create_order(user=user,
-                         total_price=total_price,
-                         total_quantity=total_quantity,
-                         session_id=session['id'],
-                         shipping=user_data,
-                         cart_product=[cart_product.product.id for cart_product in user_cart])
-            user_cart.delete()
-            return Response({'message': 'Заказ оформлен'}, status=status.HTTP_303_SEE_OTHER)
-        elif total_quantity < 1:
-            return Response({'error': 'Ваша корзина пуста'}, status=status.HTTP_409_CONFLICT)
-        else:
-            return Response({'error': 'Вы не указали адрес доставки'})
+    def create(self, request):
+        serializer = PaymentSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            return Response(serializer.data, status=200)
+        else: return Response(status=400)
+    
+
+
 
 
 class UserOrderViewSet(viewsets.ModelViewSet):

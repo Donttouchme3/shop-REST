@@ -1,12 +1,13 @@
 from rest_framework import serializers
-from .models import Product, Category, Review, FavoriteProduct, Order, Cart, Shipping
+from .models import Product, Category, Review, FavoriteProduct, Order, Cart, Shipping, Rating, Customer
 from . import mixins
-
+from shop import settings
+import stripe
 
 class CategoryFilterSerializer(serializers.ListSerializer):
-    def to_representation(self, obj):
-        obj = obj.filter(parent=None)
-        return super().to_representation(obj) 
+    def to_representation(self, data):
+        data = data.filter(parent=None)
+        return super().to_representation(data) 
 
 class CategoryRecursiveSerializer(serializers.Serializer):
     def to_representation(self, instance):
@@ -20,7 +21,8 @@ class CategorySerializer(serializers.ModelSerializer):
         list_serializer_class = CategoryFilterSerializer
         model = Category
         fields = '__all__'
-        
+
+
         
 class ProductsForCategories(serializers.ModelSerializer):
     class Meta:
@@ -33,17 +35,16 @@ class ProductsForCategories(serializers.ModelSerializer):
         product = Product.objects.filter(id=instance.id).first()
         if user.is_authenticated:
             favorites = product.favorites.filter(user=user, product_id=product.id).first()
-            product_in_cart = product.cart_product.filter(user=user, product_id=product.id).first()
-            product_detail['favorites'] = favorites.id if favorites else False
-            product_detail['product_in_cart'] = product_in_cart.id if product_in_cart else False
+            product_detail['favorite'] = True if favorites else False
         return product_detail
         
-        
+
 class CategoryDetailSerializer(serializers.ModelSerializer):
     products = ProductsForCategories(many=True)
     class Meta:
         model = Category
         fields = ('id', 'title', 'image', 'slug', 'products')
+        list_serializer_class = mixins.ProductPagination
         
 
 class ReviewCUDSerializer(serializers.ModelSerializer):
@@ -72,6 +73,26 @@ class ReviewSerializer(serializers.ModelSerializer):
         list_serializer_class = ReviewFilterSerializer
         model = Review
         fields = ('id','user', 'text', 'created_at', 'children')
+        
+        
+        
+        
+        
+class RatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Rating
+        exclude = ('user',)
+        
+    def create(self, validated_data):
+        create, _ = Rating.objects.update_or_create(
+            user = validated_data.get('user'),
+            product = validated_data.get('product'),
+            defaults={'star': validated_data.get('star')}
+        )
+        return create
+    
+    
+    
     
     
 class AddProductToUserFavorites(serializers.ModelSerializer):
@@ -84,7 +105,6 @@ class AddProductToUserFavorites(serializers.ModelSerializer):
         user = validated_data.get('user')
         favorite_product, _ = FavoriteProduct.objects.get_or_create(user=user, product=product_id)
         return favorite_product
-        
             
                  
 class UserFavoriteProductSerializer(serializers.ModelSerializer):
@@ -93,6 +113,8 @@ class UserFavoriteProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = FavoriteProduct
         fields = ('product',)
+        
+        
 
     
 class ProductDetailSerializer(serializers.ModelSerializer):
@@ -110,9 +132,13 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         if user.is_authenticated:
             favorites = product.favorites.filter(user=user, product_id=product.id).first()
             product_in_cart = product.cart_product.filter(user=user, product_id=product.id).first()
-            product_detail['favorites'] = favorites.id if favorites else False
-            product_detail['product_in_cart'] = product_in_cart.id if product_in_cart else False
+            user_product_rating = product.product_rating.filter(user=user, product_id=product.id).first()
+            product_detail['favorite'] = favorites.id if favorites else False
+            product_detail['in_cart'] = product_in_cart.id if product_in_cart else False
+            product_detail['rating'] = user_product_rating.star if user_product_rating else False
+            product_detail['image'] = product.get_first_image()
         return product_detail
+    
   
 class AddProductToUserCartSerializer(serializers.ModelSerializer):
     class Meta:
@@ -126,38 +152,34 @@ class AddProductToUserCartSerializer(serializers.ModelSerializer):
         price = validated_data.get('price')
         product = Product.objects.filter(id=product_id).first()
         product_in_cart = Cart.objects.filter(user=user, product=product_id).first()
-        if product and product.quantity >= quantity and quantity * product.price == price:
+        if product and product.quantity >= quantity and product.price == price:
             if not product_in_cart:
-                product_in_cart = Cart.objects.create(user=user, product_id=product_id, price=price, quantity=quantity)
+                product_in_cart = Cart.objects.create(user=user, product_id=product_id, price=price * quantity, quantity=quantity)
                 product.quantity -= quantity
                 product.save()
             else:
                 product_in_cart.quantity += quantity
-                product_in_cart.price += price
+                product_in_cart.price += price * quantity
                 product.quantity -= quantity
                 product_in_cart.save()
                 product.save()
             return product_in_cart
         else: return None
         
-        
-        
-            
-    #     elif mixins.CART_DELETE_PRODUCT_PATH == path:
-    #         if product_in_cart and not quantity:
-    #             product.quantity += product_in_cart.quantity
-    #             product.save()
-    #             product_in_cart.delete()  
-    #         elif product_in_cart and quantity and product_in_cart.quantity >= quantity:
-    #             product_in_cart.quantity -= quantity
-    #             product.quantity += quantity
-    #             if product_in_cart.quantity > 0:
-    #                 product_in_cart.price = product_in_cart.quantity * product.price
-    #                 product_in_cart.save()
-    #             else:
-    #                 product_in_cart.delete()
-    #             product.save()         
+    def update(self, instance, validated_data):
+        product_in_cart = instance
+        product = validated_data.get('product')
+        quantity = validated_data.get('quantity')
+        price = validated_data.get('price')
+        user = validated_data.get('user')
+        if product.price == price and product_in_cart.product == product and product_in_cart.user == user:
+            mixins.update_product_quantity(product_in_cart, product, quantity)
+            product_in_cart.quantity = quantity
+            product_in_cart.price = quantity * price
+            product_in_cart.save()
+        return product_in_cart
 
+                 
               
 class UserCartSerializer(serializers.ModelSerializer):
     product = ProductsForCategories()
@@ -183,7 +205,60 @@ class ShippingSerializer(serializers.ModelSerializer):
             }
         )
         return data
+    
+    
+class CustomerSerializer(serializers.ModelSerializer):
+    def to_representation(self, instance):
+        customer = super().to_representation(instance)
+        customer['user'] = self.context['request'].user.id
+        return customer
+    class Meta:
+        model = Customer
+        exclude = ('user',)
         
+    
+class PaymentSerializer(serializers.Serializer):
+    card = serializers.CharField(required=True)
+    cvs = serializers.CharField(required=True)
+    active_to = serializers.CharField(required=True)
+    save = serializers.SerializerMethodField()
+    
+    def get_save(self, obj):
+        request = self.context.get('request')
+        user = request.user
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        user_cart = Cart.objects.filter(user=user)
+        user_data = Shipping.objects.filter(user=user).first()
+        total_price = sum([product.price for product in user_cart])
+        total_quantity = sum([product.quantity for product in user_cart])
+        if total_price > 0 and total_quantity >= 1 and user_data:
+            session = stripe.checkout.Session.create(
+                line_items=[{
+                    'price_data': {
+                        'currency': 'usd',
+                        'product_data': {
+                            'name': 'Товары'
+                        },
+                        'unit_amount': int(total_price / 2)
+                    },
+                    'quantity': total_quantity,
+                    
+                }],
+                mode='payment',
+                success_url=request.build_absolute_uri(),
+                cancel_url=request.build_absolute_uri()
+            )
+        if session:
+            Order.objects.create(user=user,
+                         shipping=user_data,
+                         order_total_price=total_price,
+                         order_product_total_quantity=total_quantity,
+                         session_id=session['id']) 
+        else:
+            print('false')
+               
+        
+
       
 class UserOrderSerializer(serializers.ModelSerializer):
 
