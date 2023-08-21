@@ -1,14 +1,15 @@
 from rest_framework import viewsets, permissions
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
 from shop import settings
 import stripe
 
 from .serializers import (CategorySerializer, CategoryDetailSerializer, ProductDetailSerializer,
                           ReviewCUDSerializer, UserFavoriteProductSerializer, AddProductToUserFavorites,
                           AddProductToUserCartSerializer, ShippingSerializer, UserOrderSerializer,
-                          UserCartSerializer, RatingSerializer, CustomerSerializer, PaymentSerializer)
+                          UserCartSerializer, RatingSerializer, CustomerSerializer, PaymentSerializer, 
+                          ProductsForCategories)
 from .models import (Category, Product, FavoriteProduct,
                     Cart, Shipping, Order, Review, Customer)
 from . import mixins
@@ -24,23 +25,35 @@ class CustomerViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         return super().perform_create(serializer.save(user=self.request.user))
 
+class CategoryProductsPagination(PageNumberPagination):
+    page_size = 10  
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
-    
+
     def get_serializer_class(self):
         if self.action == 'retrieve':
             return CategoryDetailSerializer
         elif self.action == 'list':
             return CategorySerializer
-    
-    
-    
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        products = instance.products.all()  
+        paginator = CategoryProductsPagination()
+        page = paginator.paginate_queryset(products, request)
+        if page is not None:
+            serializer = ProductsForCategories(page, context={'request': self.request}, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = ProductsForCategories(products,  context={'request': self.request}, many=True)
+        return Response(serializer.data)
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductDetailSerializer  
-    
-        
     
     
 class ReviewCUDViewSet(viewsets.ModelViewSet):
@@ -58,17 +71,13 @@ class ReviewCUDViewSet(viewsets.ModelViewSet):
         serializer.save(user=self.request.user) 
 
         
-        
-        
 class RatingViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = RatingSerializer
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-
-
-    
+        
     
 class AddToFavoriteViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]  
@@ -91,8 +100,6 @@ class UserFavoriteProductsViewSet(viewsets.ReadOnlyModelViewSet):
         user = self.request.user  
         products = FavoriteProduct.objects.filter(user=user) 
         return products
-    
-    
     
     
 class ProductCUDUserCartViewSet(viewsets.ModelViewSet):
@@ -141,9 +148,7 @@ class UserCartViewSet(viewsets.ModelViewSet):
         response =  Response(final_data, status=status.HTTP_200_OK)
         return super().finalize_response(request, response)
             
-        
-        
-        
+          
 class PaymentView(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
     stripe.api_key = settings.STRIPE_SECRET_KEY    
@@ -151,12 +156,9 @@ class PaymentView(viewsets.ViewSet):
     def create(self, request):
         serializer = PaymentSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            return Response(serializer.data, status=200)
-        else: return Response(status=400)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        else: return Response(status=status.HTTP_400_BAD_REQUEST)
     
-
-
-
 
 class UserOrderViewSet(viewsets.ModelViewSet):
     serializer_class = UserOrderSerializer
@@ -166,5 +168,9 @@ class UserOrderViewSet(viewsets.ModelViewSet):
         user = self.request.user
         return Order.objects.filter(user=user)
     
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['action'] = self.action 
+        return context
 
         

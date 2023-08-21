@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.safestring import mark_safe
-from .models import Product, Category, Gallery, Order, Cart, Shipping, FavoriteProduct, Rating
+from .models import Product, Category, Gallery, Order, Cart, Shipping, FavoriteProduct, Rating, OrderProduct
 
 # Register your models here.
 class AdminGalleryView(admin.TabularInline):
@@ -51,6 +51,12 @@ class AdminUserCart(admin.ModelAdmin):
 class AdminRatingView(admin.ModelAdmin):
     list_display = ('id', 'user', 'product', 'star')
     list_filter = ('user', 'product', 'star')
+    
+
+@admin.register(OrderProduct)
+class AdminOrderProduct(admin.ModelAdmin):
+    list_display = ('id', 'order', 'product')
+    list_filter = ('order',)
     
     
     

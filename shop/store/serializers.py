@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Product, Category, Review, FavoriteProduct, Order, Cart, Shipping, Rating, Customer
+from .models import Product, Category, Review, FavoriteProduct, Order, Cart, Shipping, Rating, Customer, OrderProduct
 from . import mixins
 from shop import settings
 import stripe
@@ -75,9 +75,6 @@ class ReviewSerializer(serializers.ModelSerializer):
         fields = ('id','user', 'text', 'created_at', 'children')
         
         
-        
-        
-        
 class RatingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Rating
@@ -90,9 +87,6 @@ class RatingSerializer(serializers.ModelSerializer):
             defaults={'star': validated_data.get('star')}
         )
         return create
-    
-    
-    
     
     
 class AddProductToUserFavorites(serializers.ModelSerializer):
@@ -164,7 +158,7 @@ class AddProductToUserCartSerializer(serializers.ModelSerializer):
                 product_in_cart.save()
                 product.save()
             return product_in_cart
-        else: return None
+        else: product_in_cart
         
     def update(self, instance, validated_data):
         product_in_cart = instance
@@ -231,7 +225,7 @@ class PaymentSerializer(serializers.Serializer):
         user_data = Shipping.objects.filter(user=user).first()
         total_price = sum([product.price for product in user_cart])
         total_quantity = sum([product.quantity for product in user_cart])
-        if total_price > 0 and total_quantity >= 1 and user_data:
+        if total_price > 0 and user_data:
             session = stripe.checkout.Session.create(
                 line_items=[{
                     'price_data': {
@@ -241,30 +235,52 @@ class PaymentSerializer(serializers.Serializer):
                         },
                         'unit_amount': int(total_price / 2)
                     },
-                    'quantity': total_quantity,
-                    
+                    'quantity': total_quantity,             
                 }],
                 mode='payment',
                 success_url=request.build_absolute_uri(),
                 cancel_url=request.build_absolute_uri()
             )
-        if session:
-            Order.objects.create(user=user,
-                         shipping=user_data,
-                         order_total_price=total_price,
-                         order_product_total_quantity=total_quantity,
-                         session_id=session['id']) 
+            if session:
+                order = Order.objects.create(user=user,
+                            shipping=user_data,
+                            order_total_price=total_price,
+                            order_product_total_quantity=total_quantity,
+                            session_id=session['id']) 
+                for cart_product in user_cart:            
+                    order_product = OrderProduct.objects.create(order=order, product=cart_product.product)
+                if order:
+                    user_cart.delete()
+                return True
         else:
-            print('false')
+            if total_price == 0:
+                return 'Ваша корзина пуста'
+            elif not user_data:
+                return 'Вы не указали адрес доставки'
                
-        
+               
 
-      
 class UserOrderSerializer(serializers.ModelSerializer):
+    shipping = ShippingSerializer()
+    
+    def to_representation(self, instance):
+        context = super().to_representation(instance)
+        if self.context['action'] == 'retrieve':   
+            order_products = OrderProduct.objects.filter(order_id=instance.id)
+            products = []
+            for order_product in order_products:
+                order_product_serializer = ProductsForCategories(order_product.product, context={'request': self.context['request']})
+                products.append(order_product_serializer.data)
+            context['products'] = products
+            return context
+        else: return context
+    
 
     class Meta:
         model = Order
         fields = '__all__'
+        
+    
         
         
         

@@ -29,10 +29,10 @@ urlpatterns = [
      path('customer/<int:user>/update/', views.CustomerViewSet.as_view({'patch': 'partial_update'})),     
      path('customer/<int:user>/', views.CustomerViewSet.as_view({'get': 'retrieve'})),
      
-     path('my_orders/', views.UserOrderViewSet.as_view({'get': 'list'}))
+     path('my_orders/', views.UserOrderViewSet.as_view({'get': 'list'})),
+     path('my_orders/<uuid:pk>/', views.UserOrderViewSet.as_view({'get': 'retrieve'}))
      
      
 ]
 
 
-#TODO изменить логику paymentView
